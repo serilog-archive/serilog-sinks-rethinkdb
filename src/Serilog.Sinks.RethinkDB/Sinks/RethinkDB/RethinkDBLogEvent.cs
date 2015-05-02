@@ -34,7 +34,7 @@ namespace Serilog.Sinks.RethinkDB
         /// The message describing the event
         /// </summary>
         [JsonProperty]
-        public string Message { get; set; }
+        public string Message;
 
         /// <summary>
         /// The message template describing the event.
@@ -47,7 +47,7 @@ namespace Serilog.Sinks.RethinkDB
         /// </summary>
         [JsonProperty]
         public Dictionary<string, object> Props;
-        
+
         /// <summary>
         /// An exception associated with the event, or null.
         /// </summary>
