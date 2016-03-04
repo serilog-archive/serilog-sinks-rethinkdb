@@ -20,7 +20,7 @@ namespace RethinkDBSample
             Log.Logger = new LoggerConfiguration()
                 .WriteTo.ColoredConsole()
                 .MinimumLevel.Debug()
-                .WriteTo.RethinkDB("example")
+                .WriteTo.RethinkDB()
                 .CreateLogger();
 
             Log.Verbose("This app, {ExeName}, demonstrates the basics of using Serilog", "Demo.exe");

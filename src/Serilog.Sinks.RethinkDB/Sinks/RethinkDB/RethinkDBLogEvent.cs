@@ -10,7 +10,7 @@ namespace Serilog.Sinks.RethinkDB
     /// A log event.
     /// </summary>
     [DataContract]
-    public class RethinkDBLogEvent
+    public class RethinkDbLogEvent
     {
         /// <summary>
         /// The Id of the event.

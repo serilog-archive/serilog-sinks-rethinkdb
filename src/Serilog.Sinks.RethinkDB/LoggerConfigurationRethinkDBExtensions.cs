@@ -13,8 +13,6 @@
 // limitations under the License.
 
 using System;
-using RethinkDb;
-using RethinkDb.Newtonsoft.Configuration;
 using Serilog.Configuration;
 using Serilog.Events;
 using Serilog.Sinks.RethinkDB;
@@ -26,23 +24,23 @@ namespace Serilog
     /// </summary>
     public static class LoggerConfigurationRethinkDBExtensions
     {
-        private static IConnectionFactory connectionFactory;
-
         /// <summary>
         /// 
         /// </summary>
         /// <param name="loggerConfiguration"></param>
-        /// <param name="clusterName"></param>
+        /// <param name="port"></param>
         /// <param name="databaseName"></param>
         /// <param name="tableName"></param>
         /// <param name="restrictedToMinimumLevel"></param>
         /// <param name="batchPostingLimit"></param>
         /// <param name="period"></param>
+        /// <param name="hostname"></param>
         /// <returns></returns>
         /// <exception cref="ArgumentNullException"></exception>
         public static LoggerConfiguration RethinkDB(
             this LoggerSinkConfiguration loggerConfiguration, 
-            string clusterName,
+            string hostname = null,
+            int? port = null,
             string databaseName = null,
             string tableName = null,
             LogEventLevel restrictedToMinimumLevel = LevelAlias.Minimum,
@@ -50,12 +48,10 @@ namespace Serilog
             TimeSpan? period = null)
         {
             if (loggerConfiguration == null) throw new ArgumentNullException("loggerConfiguration");
-            if (clusterName == null) throw new ArgumentNullException("clusterName");
-
-            connectionFactory = ConfigurationAssembler.CreateConnectionFactory(clusterName);
-
+            
             var rethinkDbSink = new RethinkDBSink(
-                connectionFactory,
+                hostname ?? RethinkDBSink.DefaultHostName,
+                port ?? RethinkDBSink.DefaultPort,
                 databaseName ?? RethinkDBSink.DefaultDbName,
                 tableName ?? RethinkDBSink.DefaultTableName, 
                 batchPostingLimit,

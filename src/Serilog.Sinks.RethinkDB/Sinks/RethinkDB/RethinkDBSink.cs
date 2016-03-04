@@ -10,13 +10,13 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
-// limitations under the License.
+// limitations under the License.using System;
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using RethinkDb;
+using RethinkDb.Driver.Net;
 using Serilog.Events;
 using Serilog.Sinks.PeriodicBatching;
 
@@ -27,10 +27,10 @@ namespace Serilog.Sinks.RethinkDB
     /// </summary>
     public class RethinkDBSink : PeriodicBatchingSink
     {
-        private IConnectionFactory _connectionFactory;
-        private IDatabaseQuery _db;
-        private ITableQuery<RethinkDBLogEvent> _table;
-
+        private readonly string _databaseName;
+        private readonly string _tableName;
+        private static readonly RethinkDb.Driver.RethinkDB R = RethinkDb.Driver.RethinkDB.R;
+        private readonly Connection _connection;
         /// <summary>
         /// A reasonable default for the number of events posted in
         /// each batch.
@@ -43,6 +43,16 @@ namespace Serilog.Sinks.RethinkDB
         public static readonly TimeSpan DefaultPeriod = TimeSpan.FromSeconds(2);
 
         /// <summary>
+        /// The default hostname for the RethinkDb connecton
+        /// </summary>
+        public static readonly string DefaultHostName = "localhost";
+
+        /// <summary>
+        /// Default port number for the RethinkDB connection
+        /// </summary>
+        public static readonly int DefaultPort = 28015;
+
+        /// <summary>
         /// The default name for the logging database.
         /// </summary>
         public static readonly string DefaultDbName = "logging";
@@ -53,75 +63,62 @@ namespace Serilog.Sinks.RethinkDB
         public static readonly string DefaultTableName = "log";
 
         /// <summary>
-        /// Construct a sink posting to the specified database.
+        /// Create new instance of the RethinkDB sink
         /// </summary>
-        /// <param name="connectionFactory">The connection factory for connecting to RethinkDB.</param>
-        /// <param name="batchSizeLimit">The maximum number of events to post in a single batch.</param>
-        /// <param name="period">The time to wait between checking for event batches.</param>
-        /// <param name="databaseName">Name of the RethinkDB database to use for the log.</param>
-        /// <param name="tableName">Name of the RethinkDB collection to use for the log. Default is "log".</param>
-        public RethinkDBSink(IConnectionFactory connectionFactory, string databaseName, string tableName, int batchSizeLimit, TimeSpan period)
-            : base(batchSizeLimit, period)
+        /// <param name="port"></param>
+        /// <param name="databaseName"></param>
+        /// <param name="tableName"></param>
+        /// <param name="batchPostingLimit"></param>
+        /// <param name="period"></param>
+        /// <param name="hostname"></param>
+        public RethinkDBSink(string hostname,
+            int port,
+            string databaseName,
+            string tableName,
+            int batchPostingLimit,
+            TimeSpan period) : base(batchPostingLimit, period)
         {
-            if (connectionFactory == null) throw new ArgumentNullException("connectionFactory");
+            _databaseName = databaseName;
+            _tableName = tableName;
+            _connection = R.Connection().Hostname(hostname).Port(port).Connect();
+        }
+        private async void EnsureDatabaseAndTable()
+        {
+            var dbExists = await R.DbList().Contains(_databaseName).RunAsync(_connection);
+            if (!dbExists)
+                R.DbCreate(_databaseName);
 
-            _connectionFactory = connectionFactory;
+            var tableExists = await R.Db(_databaseName).TableList().Contains(_tableName).RunAsync(_connection);
 
-            _db = Query.Db(databaseName);
-            _table = _db.Table<RethinkDBLogEvent>(tableName);
-
-            EnsureDbCreated(databaseName, tableName);
+            if (!tableExists)
+                R.Db(_databaseName).TableCreate(_tableName);
         }
 
         /// <summary>
-        /// Makes sure that the Database and Table is created in RethinkDB.
-        /// </summary>
-        /// <param name="databaseName">The name of the database to create in RethinkDB if it doesn't exist.</param>
-        /// <param name="tableName">The name of the table to create in RethinkDB if it doesn't exist.</param>
-        private void EnsureDbCreated(string databaseName, string tableName)
-        {
-            using (IConnection connection = _connectionFactory.Get())
-            {
-                if (!connection.Run(Query.DbList()).Contains(databaseName))
-                {
-                    connection.Run(Query.DbCreate(databaseName));
-                }
-
-                if (!connection.Run(_db.TableList()).Contains(tableName))
-                {
-                    connection.Run(_db.TableCreate(tableName));
-                }
-            }
-        }
-
-        /// <summary>
-        /// Emit a batch of log events, running to completion asynchronously.
+        /// Emit a batch of log events, running asynchronously.
         /// </summary>
         /// <param name="events">The events to emit.</param>
-        /// <remarks>Override either <see cref="PeriodicBatchingSink.EmitBatch"/> or <see cref="PeriodicBatchingSink.EmitBatchAsync"/>,
-        /// not both.</remarks>
+        /// <remarks>
+        /// Override either <see cref="M:Serilog.Sinks.PeriodicBatching.PeriodicBatchingSink.EmitBatch(System.Collections.Generic.IEnumerable{Serilog.Events.LogEvent})"/> or <see cref="M:Serilog.Sinks.PeriodicBatching.PeriodicBatchingSink.EmitBatchAsync(System.Collections.Generic.IEnumerable{Serilog.Events.LogEvent})"/>,
+        ///             not both. Overriding EmitBatch() is preferred.
+        /// </remarks>
         protected override async Task EmitBatchAsync(IEnumerable<LogEvent> events)
         {
-            using (IConnection connection = await _connectionFactory.GetAsync())
+            EnsureDatabaseAndTable();
+
+            foreach (var logEvent in events)
             {
-                var logs = events.Select(logEvent => new RethinkDBLogEvent
+                await R.Db(_databaseName).Table(_tableName).Insert(new RethinkDbLogEvent
                 {
                     Id = Guid.NewGuid(),
+                    Timestamp = logEvent.Timestamp,
                     Message = logEvent.RenderMessage(),
                     MessageTemplate = logEvent.MessageTemplate.Text,
                     Level = logEvent.Level,
-                    Timestamp = logEvent.Timestamp,
-                    Exception = logEvent.Exception != null ? logEvent.Exception.ToString() : null,
-                    Props = Convert(logEvent.Properties),
-                });
-
-                await connection.RunAsync(_table.Insert(logs));
+                    Exception = logEvent?.Exception?.ToString(),
+                    Props = logEvent.Properties.ToDictionary<KeyValuePair<string, LogEventPropertyValue>, string, object>(k => k.Key, v => v.Value)
+                }).RunAsync(_connection);
             }
-        }
-
-        private static Dictionary<string, object> Convert(IEnumerable<KeyValuePair<string, LogEventPropertyValue>> properties)
-        {
-            return properties.ToDictionary<KeyValuePair<string, LogEventPropertyValue>, string, object>(property => property.Key, property => property.Value);
         }
     }
 }
